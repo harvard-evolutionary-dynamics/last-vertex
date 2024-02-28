@@ -43,6 +43,7 @@ def last_vertex(
   samples: int = 1000,
   overwrite: bool = True,
   use_existing_file: bool = False,
+  thread: bool = True,
 ) -> pd.DataFrame:
   file_name = f"data/{graph_generator.name}-estimated-N-vs-ft-{max(Ns)}.pkl"
   # Ns = list(range(2, N+1))
@@ -54,9 +55,13 @@ def last_vertex(
       print(f"{N=}")
       G = graph_generator.generate(N)
 
+    if thread:
       with Pool(NUM_WORKERS) as p:
         for results in p.map(partial(work, G, N, samples), Rs):
           data.extend(results)
+    else:
+      for results in map(partial(work, G, N, samples), Rs):
+        data.extend(results)
 
     df = pd.DataFrame(data, columns=["Population size", "r", "Last vertex"])
     if overwrite:
@@ -137,6 +142,29 @@ def plot_prob_initial_is_last(df: pd.DataFrame, N, graph_generator: GraphGenerat
   ax.set(xlabel='Relative fitness, $r$', ylabel='Probability last is initial, $p$')
   plt.savefig(f'figs/p-vs-r-{graph_generator.name}-N-{N}-samples-{samples}.png', dpi=300, bbox_inches="tight")
   plt.show()
+
+def plot_prob_last(df: pd.DataFrame, N, graph_generator: GraphGenerator, samples):
+  df = df[df["Population size"] == N]
+  assert len(df["r"].unique()) == 1
+  df = df.groupby(['Population size', 'r']).value_counts(normalize=True).reset_index(name='p')
+  df["Last vertex"] += 1
+  missing_vertices = set(range(1, N+1)) - set(df["Last vertex"].values)
+  for vertex in missing_vertices:
+    df.loc[len(df.index)] = [N, df["r"][0], vertex, 0]  
+  # print(df)
+  ax = sns.barplot(
+    df,
+    x="Last vertex",
+    y="p",
+    width=1,
+    palette='Greens_d',
+  )
+  # ax.set_xticks(range(1, N+1))
+  # ax.set_xticklabels(range(1, N+1))
+  ax.set(xlabel='Location, $i$', ylabel='Probability last is $i$, $p$')
+  fig = ax.get_figure()
+  fig.savefig(f'figs/p-vs-i-R-1-{graph_generator.name}-N-{N}-samples-{samples}.png', dpi=300, bbox_inches="tight")
+  # plt.show()
 
 def star_central_graph(N: int) -> nx.DiGraph:
   G = nx.DiGraph()
@@ -244,22 +272,30 @@ def main2():
   )
   # plot_last_vertices(df, max(Ns), SAMPLES, Rs)
 
-def main():
+def main1():
   setup()
-  N = 10
+  with Pool(NUM_WORKERS) as p:
+    for _ in p.map(do, range(10, 11)): ...
+
+def do(N):
+  print(f'starting {N}')
+  # N = 10
   delta = .05
   epsilon = .01
-  SAMPLES = 1000 # int(np.ceil(4/epsilon**2 * np.log(2*N/delta))) # P[exists st. |X/s-EX/s|>eps] <= 1-delta # 10000
+  SAMPLES = int(np.ceil(4/epsilon**2 * np.log(2*N/delta))) # P[exists st. |X/s-EX/s|>eps] <= 1-delta # 10000
   print(f"{SAMPLES=}")
   gen=GraphGenerator(name="directed-cycle", generate=directed_cycle)
-  Rs = np.linspace(1, 40, 500)
+  Rs = (1,) # np.linspace(1, 40, 200)
   df = last_vertex(
     [N],
     gen,
     samples=SAMPLES,
     Rs=Rs,
+    thread=False,
   )
-  plot_prob_initial_is_last(df, N, gen, SAMPLES)
+  plot_prob_last(df, N, gen, SAMPLES)
+  print(f'done with {N}')
+# plot_prob_initial_is_last(df, N, gen, SAMPLES)
 
 def main3():
   setup()
@@ -282,6 +318,161 @@ def main3():
   )
   plot_last_vertices_graph(df, N, gen, SAMPLES, R)
 
+
+SLACK = 1e-6
+def sd(N, rblock):
+  print('start', rblock)
+  bestp, bestpr = 0, 0
+  for r in rblock:
+    fix = solve_directed(N, r=r, slack=SLACK)
+    if fix[0] > bestp:
+      bestp = fix[0]
+      bestpr = r
+  print('done', rblock, bestp, bestpr)
+  return bestp, bestpr
+
+
+def main12():
+  setup()
+  ax = sns.lineplot(
+    pd.DataFrame(
+      columns=["N", "best r", "p"],
+      data=[
+        (3,1.0,0.1904761903431444),
+        (4,1.0,0.26666666672875483),
+        (5,2.4979999999999998,0.27512895726956244),
+        (6,4.137444444444445,0.28353233603037115),
+        (7,5.446,0.2929224173005908),
+        (8,6.6033333333333335,0.301245511494557),
+        (9,7.688555555555555,0.3081990363230064),
+        (10,8.73722222222222,0.31394055417283956),
+    ]),
+    marker='o',
+    linestyle='--',
+    x="N",
+    y="best r",
+  )
+  ax.set(xlabel='Population size, $N$', ylabel='Best fitness, $r$')
+  # ax.set_xticks(range(len(df)))
+  # ax.set_xticklabels(['1'] + ([''] * (len(df)-2)) + [f'{N}'])
+  fig = ax.get_figure()
+  fig.savefig(f'figs/best-r-directed-slack-{1e-6}.png', dpi=300, bbox_inches="tight")
+
+def main111():
+  setup()
+  BLOCKS = 10
+  INTERVALS = 10
+  ITERATIONS = 3
+  n = 9
+  for N in range(n, n+1):
+    print(N)
+    rlo, rhi = 1, 2*N
+    for _ in range(ITERATIONS):
+      print(rlo, rhi)
+      blocksize = (rhi - rlo) / BLOCKS
+      rblocks = [
+        np.linspace(rlo + blocksize*i, rlo + blocksize*(i+1), INTERVALS)
+        for i in range(BLOCKS)
+      ]
+      with Pool(NUM_WORKERS) as p:
+        bests, rs = zip(*p.map(partial(sd, N), rblocks))
+
+      i = np.argmax(bests, keepdims=1)[0]
+      rlo, rhi = rlo + blocksize*i, rlo + blocksize*(i+1)
+      bestr = rs[i]
+      bestp = bests[i]
+      print('best r and p:', bestr, bestp)
+
+    
+
+def main():
+  setup()
+  SLACK = 1e-6
+  for N in range(2, 41):
+    print(N)
+    fix, ext = solve_directed(N, r=1, slack=SLACK)
+    data=[(idx+1, p) for idx, p in ext.items()]
+    df = pd.DataFrame(columns=["Last vertex", "p"], data=data)
+    ax = sns.barplot(
+      df,
+      x="Last vertex",
+      y="p",
+      width=1,
+      palette='Greens_d',
+    )
+    ax.set(xlabel='Location, $i$', ylabel='Probability last is $i$, $p$')
+    ax.set_xticks(range(len(df)))
+    ax.set_xticklabels(['1'] + ([''] * (len(df)-2)) + [f'{N}'])
+    fig = ax.get_figure()
+    fig.savefig(f'figs/p-vs-i-R-1-directed-extinction-N-{N}-slack-{SLACK}.png', dpi=300, bbox_inches="tight")
+    plt.clf()
+ 
+import sympy 
+
+from itertools import product
+import scipy.sparse.linalg
+
+
+
+def solve_directed(N: int, r: float = 1, slack=1e-6):
+  # (i, l) -> (ip, lp)
+  A = {}
+  idx = lambda a, b: a * (N+1) + b
+  ridx = lambda id: (id // (N+1), id % (N+1))
+
+  A = np.zeros((N*(N+1), N*(N+1)))
+  for i, ip in product(range(N), repeat=2):
+    for l, lp in product(range(N+1), repeat=2):
+      row, col = idx(i, l), idx(ip, lp)
+      A[row, col] = 0
+      if l in (0, N): A[row, col] = int(lp == l and ip == i)
+      elif ip == i:   A[row, col] = (1/(r+1)) * int(lp == l - 1)
+      elif ip == (i+1) % N: A[row, col] = (r/(r+1)) * int(lp == l + 1)
+
+  # S, U = scipy.linalg.eig(A.T)
+  #stationary = np.array(U[:, np.where(np.abs(S - 1.) < 1e-8)[0][0]].flat)
+  #stationary = stationary / np.sum(stationary)
+
+  # print(S)
+  # print(U)
+  # print(sympy.Matrix(A).diagonalize())
+  x = np.zeros((N*(N+1),))
+  x[idx(0, 1)] = 1
+  k = 0
+  s = +np.inf
+  while s >= slack:
+    k = k*2 if k > 0 else 1
+    b = x@np.linalg.matrix_power(A, k)
+    ans = {}
+    for idx, p in enumerate(b):
+      ans[ridx(idx)] = p
+    totalf = 0
+    totale = 0
+    fix = {}
+    ext = {}
+    s = 0
+    for (i, l), p in ans.items():
+      if 0 < l < N:
+        s += p
+        continue
+      elif l == N:
+        fix[i] = p
+        totalf += p
+      elif l == 0:
+        ext[i] = p
+        totale += p
+
+    if totalf == 0 or totale == 0:
+      s = +np.inf
+      continue
+
+    for i in range(N):
+      fix[i] /= totalf
+      ext[i] /= totale
+
+  return fix, ext
+
+  
 
 
 @lru_cache(maxsize=None)
