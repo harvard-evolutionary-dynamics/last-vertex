@@ -11,7 +11,7 @@ def sample(fn, times):
       yield ans
       count += 1
 
-def trial_cond_fix_last_vertex(G: nx.DiGraph, S: Optional[Set], r: float):
+def trial_cond_fix_last_vertex(G: nx.DiGraph, S: Optional[Set], r: float, count_steps: bool = False):
   if S is None:
     S = {random.choice(list(G.nodes()))}
 
@@ -23,7 +23,7 @@ def trial_cond_fix_last_vertex(G: nx.DiGraph, S: Optional[Set], r: float):
 
   dier = None
   while V - mutants:
-    if not mutants: return None
+    if not mutants: return None if not count_steps else (None, steps)
     k = len(mutants)
     if random.random() < r*k/(N + (r-1)*k):
       birther = random.choice(list(mutants))
@@ -38,4 +38,4 @@ def trial_cond_fix_last_vertex(G: nx.DiGraph, S: Optional[Set], r: float):
       mutants.remove(dier)
     
     steps += 1
-  return dier
+  return dier if not count_steps else (dier, steps)

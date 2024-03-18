@@ -22,6 +22,7 @@ plt.rc('text.latex', preamble=r'\usepackage{amssymb}')
 
 INITIAL_NODE_PLACEMENT = 0
 NUM_WORKERS = 8
+ROUND = lambda steps, precision: (steps // precision) * precision
 
 @dataclass
 class GraphGenerator:
@@ -32,8 +33,8 @@ class GraphGenerator:
 def work(G, N, samples, r):
   print(f"{r=}")
   results = []
-  for vertex in sample(lambda: trial_cond_fix_last_vertex(G, {INITIAL_NODE_PLACEMENT}, r), samples):
-    results.append((N, r, vertex))
+  for vertex, steps in sample(lambda: trial_cond_fix_last_vertex(G, {INITIAL_NODE_PLACEMENT}, r, count_steps=True), samples):
+    results.append((N, r, vertex, ROUND(steps, 500)))
   return results
 
 def last_vertex(
@@ -63,7 +64,7 @@ def last_vertex(
       for results in map(partial(work, G, N, samples), Rs):
         data.extend(results)
 
-    df = pd.DataFrame(data, columns=["Population size", "r", "Last vertex"])
+    df = pd.DataFrame(data, columns=["Population size", "r", "Last vertex", "Steps"])
     if overwrite:
       df.to_pickle(file_name)
 
@@ -97,7 +98,7 @@ def plot_last_vertices_graph(df: pd.DataFrame, N, graph_generator: GraphGenerato
   cbar = plt.colorbar(sm, orientation='vertical')
   cbar.set_label('Probability')
   cbar.set_ticks([min(values), max(values)])
-  cbar.set_ticklabels([f'min={min(values)}', f'max={max(values)}'])
+  cbar.set_ticklabels([f'min={min(values):.3f}', f'max={max(values):.3f}'])
 
   nx.draw_networkx_edges(G, pos) # , connectionstyle="arc3,rad=0.1", arrows=True)
 
@@ -165,6 +166,33 @@ def plot_prob_last(df: pd.DataFrame, N, graph_generator: GraphGenerator, samples
   fig = ax.get_figure()
   fig.savefig(f'figs/p-vs-i-R-1-{graph_generator.name}-N-{N}-samples-{samples}.png', dpi=300, bbox_inches="tight")
   # plt.show()
+
+def plot_time_vs_prob_last(df: pd.DataFrame, N, graph_generator: GraphGenerator, samples):
+  df = df[df["Population size"] == N]
+  assert len(df["r"].unique()) == 1
+  df = df.groupby(['Population size', 'r', 'Steps']).value_counts(normalize=True).reset_index(name='p')
+  df["Last vertex"] += 1
+  missing_vertices = set(range(1, N+1)) - set(df["Last vertex"].values)
+  for vertex in missing_vertices:
+    df.loc[len(df.index)] = [N, df["r"][0], vertex, 0]  
+  # print(df)
+  results = df.pivot(
+    columns="Last vertex",
+    values="p",
+    index="Steps",
+  )
+  results.sort_index(level=0, ascending=False, inplace=True)
+  ax = sns.heatmap(
+    results,
+    # width=1,
+    # palette='Greens_d',
+  )
+  # ax.set_xticks(range(1, N+1))
+  # ax.set_xticklabels(range(1, N+1))
+  # ax.set(xlabel='Location, $i$', ylabel='Probability last is $i$, $p$')
+  fig = ax.get_figure()
+  # fig.savefig(f'figs/p-vs-i-R-1-{graph_generator.name}-N-{N}-samples-{samples}.png', dpi=300, bbox_inches="tight")
+  plt.show()
 
 def star_central_graph(N: int) -> nx.DiGraph:
   G = nx.DiGraph()
@@ -253,10 +281,10 @@ def setup():
   sns.set_theme(font_scale=2, rc={'text.usetex' : True})
   sns.set_style("whitegrid", {
     'axes.grid' : False,
-    'axes.spines.left': False,
-    'axes.spines.right': False,
-    'axes.spines.top': False,
-    'axes.spines.bottom': False,
+   #  'axes.spines.left': False,
+   #  'axes.spines.right': False,
+   #  'axes.spines.top': False,
+   #  'axes.spines.bottom': False,
   })
 
 def main2():
@@ -297,17 +325,17 @@ def do(N):
   print(f'done with {N}')
 # plot_prob_initial_is_last(df, N, gen, SAMPLES)
 
-def main3():
+def mainhh():
   setup()
-  N = 3
-  R = 1
-  SAMPLES = 100000
+  N = 25
+  R = 10
+  SAMPLES = 9999 # 100000
   # gen = GraphGenerator(name="line", generate=line_graph, layout=nx.circular_layout)
-  # gen = GraphGenerator(name="grid-periodic", generate=lambda n: grid_graph(n, periodic=True), layout=lambda G: {node: [node//int(np.sqrt(N)), node % int(np.sqrt(N))] for node in G.nodes()})
+  gen = GraphGenerator(name="grid-periodic", generate=lambda n: grid_graph(n, periodic=True), layout=lambda G: {node: [node//int(np.sqrt(N)), node % int(np.sqrt(N))] for node in G.nodes()})
   # gen = GraphGenerator(name="grid", generate=grid_graph, layout=lambda G: {node: [node//int(np.sqrt(N)), node % int(np.sqrt(N))] for node in G.nodes()})
   # gen = GraphGenerator(name="star-outskirt", generate=star_outskirt_graph, layout=nx.kamada_kawai_layout)
   # gen = GraphGenerator(name="star-central", generate=star_central_graph, layout=nx.kamada_kawai_layout)
-  gen = GraphGenerator(name="directed-cycle", generate=directed_cycle, layout=nx.circular_layout)
+  # gen = GraphGenerator(name="directed-cycle", generate=directed_cycle, layout=nx.circular_layout)
   # gen = GraphGenerator(name='undirected-cycle', generate=undirected_cycle, layout=nx.circular_layout)
   # gen = GraphGenerator(name='complete', generate=complete_graph, layout=nx.circular_layout)
   df = last_vertex(
@@ -330,6 +358,36 @@ def sd(N, rblock):
       bestpr = r
   print('done', rblock, bestp, bestpr)
   return bestp, bestpr
+
+def mainhi():
+  setup()
+  SLACK=1e-6
+  data = []
+  for N in range(2, 20+1):
+    print(N)
+    best_r = 0
+    best_p = 0
+    for R in np.linspace(1, 2*N, (100)*2*N):
+      fix, ext = solve_directed(N, r=R, slack=SLACK)
+      if fix[0] > best_p:
+        best_r = R
+        best_p = fix[0]
+    data.append((N, best_r, best_p))
+
+  df = pd.DataFrame(columns=["N", "best_r", "best_p"], data=data)
+  print(df)
+  ax = sns.lineplot(
+    df,
+    x="N",
+    y="best_p",
+    # width=1,
+    # palette='Greens_d',
+    marker='o',
+    linestyle='--',
+  )
+  ax.set(xlabel='Population size, $N$', ylabel='Corresponding probability, $p$')
+  fig = ax.get_figure()
+  fig.savefig(f'figs/best-corresponding-p-directed-slack-{1e-6}.png', dpi=300, bbox_inches="tight")
 
 
 def main12():
@@ -383,15 +441,52 @@ def main111():
       bestp = bests[i]
       print('best r and p:', bestr, bestp)
 
-    
 
-def main():
+def main111():
+  N = 3
+  fix = solve_directed(N, r=1)
+
+def main2():
+  setup()
+  Ns = list(range(2, 30+1))
+  SAMPLES = 10000
+  Rs = (1,)
+  df = last_vertex(
+    Ns,
+    GraphGenerator(name="directed-cycle", generate=directed_cycle),
+    samples=SAMPLES,
+    Rs=Rs,
+  )
+  # plot_last_vertices(df, max(Ns), SAMPLES, Rs)
+
+def mainlol():
+  setup()
+  N = 40
+  # delta = .05
+  # epsilon = .01
+  # SAMPLES = int(np.ceil(4/epsilon**2 * np.log(2*N/delta))) # P[exists st. |X/s-EX/s|>eps] <= 1-delta # 10000
+  SAMPLES = 100000
+  print(f"{SAMPLES=}")
+  gen=GraphGenerator(name="directed-cycle", generate=directed_cycle)
+  Rs = (2,) # np.linspace(1, 40, 200)
+  df = last_vertex(
+    [N],
+    gen,
+    samples=SAMPLES,
+    Rs=Rs,
+    thread=False,
+  )
+  plot_time_vs_prob_last(df, N, gen, SAMPLES)
+
+def mainnope():
   setup()
   SLACK = 1e-6
-  for N in range(2, 41):
+  R = 1
+  for N in range(2, 40+1):
     print(N)
-    fix, ext = solve_directed(N, r=1, slack=SLACK)
-    data=[(idx+1, p) for idx, p in ext.items()]
+    fix, ext = solve_directed(N, r=R, slack=SLACK)
+    print(fix)
+    data=[(idx+1, p) for idx, p in fix.items()]
     df = pd.DataFrame(columns=["Last vertex", "p"], data=data)
     ax = sns.barplot(
       df,
@@ -400,19 +495,21 @@ def main():
       width=1,
       palette='Greens_d',
     )
-    ax.set(xlabel='Location, $i$', ylabel='Probability last is $i$, $p$')
+    # ax.set(xlabel='Location, $i$', ylabel='Probability last is $i$, $p$')
+    ax.set(xlabel='', ylabel='')
     ax.set_xticks(range(len(df)))
     ax.set_xticklabels(['1'] + ([''] * (len(df)-2)) + [f'{N}'])
+    ys = np.linspace(0, 1, 11, endpoint=True) 
+    ax.set_yticks(ys)
+    ax.set_yticklabels([''] * len(ys))
     fig = ax.get_figure()
-    fig.savefig(f'figs/p-vs-i-R-1-directed-extinction-N-{N}-slack-{SLACK}.png', dpi=300, bbox_inches="tight")
+    fig.savefig(f'figs-present/undirected-fixation-1/p-vs-i-R-{R}-fixation-N-{N}-slack-{SLACK}.png', dpi=300, bbox_inches="tight")
     plt.clf()
  
 import sympy 
 
 from itertools import product
 import scipy.sparse.linalg
-
-
 
 def solve_directed(N: int, r: float = 1, slack=1e-6):
   # (i, l) -> (ip, lp)
@@ -425,9 +522,16 @@ def solve_directed(N: int, r: float = 1, slack=1e-6):
     for l, lp in product(range(N+1), repeat=2):
       row, col = idx(i, l), idx(ip, lp)
       A[row, col] = 0
-      if l in (0, N): A[row, col] = int(lp == l and ip == i)
-      elif ip == i:   A[row, col] = (1/(r+1)) * int(lp == l - 1)
-      elif ip == (i+1) % N: A[row, col] = (r/(r+1)) * int(lp == l + 1)
+      # directed
+      # if l in (0, N): A[row, col] = (int(lp == l and ip == i))
+      # elif ip == i:   A[row, col] = (1/ (r+1)) * int(lp == l - 1)
+      # elif ip == (i+1) % N: A[row, col] = r/(r+1) * int(lp == l + 1)
+
+      # undirected
+      if l in (0, N): A[row, col] = (int(lp == l and ip == i))
+      elif ip == i:   A[row, col] = (r/(2*(r+1))) * int(lp == l + 1) + (1/(2*(r+1))) * int(lp == l - 1)
+      elif ip == (i-1) % N: A[row, col] = (1/(2*(r+1))) * int(lp == l - 1)
+      elif ip == (i+1) % N: A[row, col] = r/(2*(r+1)) * int(lp == l + 1)
 
   # S, U = scipy.linalg.eig(A.T)
   #stationary = np.array(U[:, np.where(np.abs(S - 1.) < 1e-8)[0][0]].flat)
@@ -435,9 +539,102 @@ def solve_directed(N: int, r: float = 1, slack=1e-6):
 
   # print(S)
   # print(U)
-  # print(sympy.Matrix(A).diagonalize())
   x = np.zeros((N*(N+1),))
   x[idx(0, 1)] = 1
+
+  # print(A)
+  # P, D = sympy.Matrix(A).diagonalize()
+  # print(D)
+
+  # jv = sympy.symbols('t')
+  # print(D)
+  # input()
+  # print(D**jv)
+  # input()
+  # aa = x.dot(P).dot(D**jv).dot(P.inv())
+  # print(len(aa))
+  # sympy.print_latex(aa[0].simplify())
+  # for j in range(1, 100):
+  #   print(aa[0].subs({jv: j}).evalf())
+  # input()
+
+  k = 0
+  s = +np.inf
+  while s >= slack:
+    k = k*2 if k > 0 else 1
+    b = x@np.linalg.matrix_power(A, k)
+    ans = {}
+    for idx, p in enumerate(b):
+      ans[ridx(idx)] = p
+    totalf = 0
+    totale = 0
+    fix = {}
+    ext = {}
+    s = 0
+    for (i, l), p in ans.items():
+      if 0 < l < N:
+        s += p
+        continue
+      elif l == N:
+        fix[i] = p
+        totalf += p
+      elif l == 0:
+        ext[i] = p
+        totale += p
+
+    if totalf == 0 or totale == 0:
+      s = +np.inf
+      continue
+
+    for i in range(N):
+      fix[i] /= totalf
+      ext[i] /= totale
+
+  # print(k)
+  return fix, ext
+
+
+def solve_directedd(N: int, slack=1e-6):
+  # (i, l) -> (ip, lp)
+  A = {}
+  idx = lambda a, b: a * (N+1) + b
+  ridx = lambda id: (id // (N+1), id % (N+1))
+
+  r = sympy.symbols('r')
+  A = np.zeros((N*(N+1), N*(N+1)), dtype=sympy.Rational)
+  for i, ip in product(range(N), repeat=2):
+    for l, lp in product(range(N+1), repeat=2):
+      row, col = idx(i, l), idx(ip, lp)
+      A[row, col] = 0
+      if l in (0, N): A[row, col] = sympy.Rational(int(lp == l and ip == i), 1)
+      elif ip == i:   A[row, col] = (1/ (r+1)) * int(lp == l - 1)
+      elif ip == (i+1) % N: A[row, col] = (r/ (r+1)) * int(lp == l + 1)
+
+  # S, U = scipy.linalg.eig(A.T)
+  #stationary = np.array(U[:, np.where(np.abs(S - 1.) < 1e-8)[0][0]].flat)
+  #stationary = stationary / np.sum(stationary)
+
+  # print(S)
+  # print(U)
+  x = np.zeros((N*(N+1),), dtype=sympy.Rational)
+  x[idx(0, 1)] = 1
+
+  print(A)
+  input()
+  P, D = sympy.Matrix(A).diagonalize()
+  print(D)
+
+  jv = sympy.symbols('t')
+  print(D)
+  input()
+  print(D**jv)
+  input()
+  aa = x.dot(P).dot(D**jv).dot(P.inv())
+  print(len(aa))
+  sympy.print_latex(aa[0].simplify())
+  for j in range(1, 100):
+    print(aa[0].subs({jv: j}).evalf())
+  input()
   k = 0
   s = +np.inf
   while s >= slack:
