@@ -359,20 +359,22 @@ def sd(N, rblock):
   print('done', rblock, bestp, bestpr)
   return bestp, bestpr
 
-def mainhi():
+def mainbestrp():
   setup()
   SLACK=1e-6
   data = []
-  for N in range(2, 20+1):
+  for N in range(80, 80+1):
     print(N)
     best_r = 0
     best_p = 0
-    for R in np.linspace(1, 2*N, (100)*2*N):
+    for R in np.linspace(N-5, N, 200):
       fix, ext = solve_directed(N, r=R, slack=SLACK)
+      print(N, R, fix[0])
       if fix[0] > best_p:
         best_r = R
         best_p = fix[0]
     data.append((N, best_r, best_p))
+    print((N, best_r, best_p))
 
   df = pd.DataFrame(columns=["N", "best_r", "best_p"], data=data)
   print(df)
@@ -387,7 +389,8 @@ def mainhi():
   )
   ax.set(xlabel='Population size, $N$', ylabel='Corresponding probability, $p$')
   fig = ax.get_figure()
-  fig.savefig(f'figs/best-corresponding-p-directed-slack-{1e-6}.png', dpi=300, bbox_inches="tight")
+  plt.plot()
+  # fig.savefig(f'figs/best-corresponding-p-directed-slack-{1e-6}.png', dpi=300, bbox_inches="tight")
 
 
 def main12():
@@ -503,8 +506,48 @@ def mainnope():
     ax.set_yticks(ys)
     ax.set_yticklabels([''] * len(ys))
     fig = ax.get_figure()
-    fig.savefig(f'figs-present/undirected-fixation-1/p-vs-i-R-{R}-fixation-N-{N}-slack-{SLACK}.png', dpi=300, bbox_inches="tight")
+    plt.plot()
+    fig.savefig(f'figs-present/directed-fixation/p-vs-i-R-{R}-fixation-N-{N}-slack-{SLACK}.png', dpi=300, bbox_inches="tight")
     plt.clf()
+
+from tqdm import tqdm
+def main():
+  setup()
+  SLACK = 1e-6
+  N1 = 2
+  N2 = 2
+  mu12 = 1
+  mu21 = 0
+  rho1 = 1
+  rho2 = 1
+  R = 20
+  data = []
+  for mu12 in np.linspace(0, 100, 10, endpoint=True)[1:]:
+    fix, ext = solve_islands(N1, N2, mu12=mu12, mu21=mu21, rho1=rho1, rho2=rho2, r=R, slack=SLACK) # solve_directed(N, r=R, slack=SLACK)
+    data.append((mu12, fix[0]))
+
+  df = pd.DataFrame(columns=["mu12", "p0"], data=data)
+  print(df)
+  ax = sns.lineplot(
+    df,
+    x="mu12",
+    y="p0",
+    # width=1,
+    marker='o',
+    # size=.2,
+    linestyle='--',
+    # palette='Greens_d',
+  )
+    # ax.set(xlabel='Location, $i$', ylabel='Probability last is $i$, $p$')
+  ax.set(xlabel='', ylabel='')
+  # ax.set_xticks(range(len(df)))
+  # ax.set_xticklabels(['Left', 'Right'])
+  ys = np.linspace(0, 1, 11, endpoint=True) 
+  # ax.set_yticks(ys)
+  # ax.set_yticklabels([''] * len(ys))
+  fig = ax.get_figure()
+  fig.savefig(f'figs-present/island-fixation/pepa.png', dpi=300, bbox_inches="tight")
+  plt.clf()
  
 import sympy 
 
@@ -523,15 +566,15 @@ def solve_directed(N: int, r: float = 1, slack=1e-6):
       row, col = idx(i, l), idx(ip, lp)
       A[row, col] = 0
       # directed
-      # if l in (0, N): A[row, col] = (int(lp == l and ip == i))
-      # elif ip == i:   A[row, col] = (1/ (r+1)) * int(lp == l - 1)
-      # elif ip == (i+1) % N: A[row, col] = r/(r+1) * int(lp == l + 1)
+      if l in (0, N): A[row, col] = (int(lp == l and ip == i))
+      elif ip == i:   A[row, col] = (1/ (r+1)) * int(lp == l - 1)
+      elif ip == (i+1) % N: A[row, col] = r/(r+1) * int(lp == l + 1)
 
       # undirected
-      if l in (0, N): A[row, col] = (int(lp == l and ip == i))
-      elif ip == i:   A[row, col] = (r/(2*(r+1))) * int(lp == l + 1) + (1/(2*(r+1))) * int(lp == l - 1)
-      elif ip == (i-1) % N: A[row, col] = (1/(2*(r+1))) * int(lp == l - 1)
-      elif ip == (i+1) % N: A[row, col] = r/(2*(r+1)) * int(lp == l + 1)
+      # if l in (0, N): A[row, col] = (int(lp == l and ip == i))
+      # elif ip == i:   A[row, col] = (r/(2*(r+1))) * int(lp == l + 1) + (1/(2*(r+1))) * int(lp == l - 1)
+      # elif ip == (i-1) % N: A[row, col] = (1/(2*(r+1))) * int(lp == l - 1)
+      # elif ip == (i+1) % N: A[row, col] = r/(2*(r+1)) * int(lp == l + 1)
 
   # S, U = scipy.linalg.eig(A.T)
   #stationary = np.array(U[:, np.where(np.abs(S - 1.) < 1e-8)[0][0]].flat)
@@ -558,6 +601,107 @@ def solve_directed(N: int, r: float = 1, slack=1e-6):
   #   print(aa[0].subs({jv: j}).evalf())
   # input()
 
+  return fix_and_ext(A, x, N, slack, idx, ridx)
+
+def solve_islands(N1: int, N2: int, mu12: float, mu21: float, r: float = 1, rho1: float = 1, rho2: float = 1, slack=1e-6):
+  # (i, l) -> (ip, lp)
+  A = {}
+  idx = lambda a, b: a * (N2+1) + b
+  ridx = lambda id: (id // (N2+1), (id % (N2+1)) + (N2+1)*int(id == (N1+1)*(N2+1)))
+
+  A = np.zeros(((N1+1)*(N2+1)+1, (N1+1)*(N2+1)+1))
+  A[(N1+1)*(N2+1), (N1+1)*(N2+1)] = 1
+
+  for n1, n1p in product(range(N1+1), repeat=2):
+    for n2, n2p in product(range(N2+1), repeat=2):
+      row, col = idx(n1, n2), idx(n1p, n2p)
+      A[row, col] = 0
+      w = ((r-1)*n1 + N1) + ((r-1)*n2 + N2)
+      done = False
+      if n1+n2 not in (0, N1+N2) and n1p+n2p in (0, N1+N2):
+        # potentially absorbing state.
+        done = True
+      if n1+n2 in (0, N1+N2):
+        A[row, col] = int(n1p == n1 and n2p == n2)
+      elif n1p == n1 and n2p == n2+1:
+        # picked element in left to reproduce to right
+        # picked elemnt in right to reproduce in right
+        A[row, col + done] = (n1*r/w) * ((N2-n2)*mu12/(N1*rho1+mu12*N2)) + (n2*r/w) * ((N2-n2)*rho2/(N2*rho2+mu21*N1))
+      elif n1p == n1+1 and n2p == n2:
+        # picked element in left to reproduce to left
+        # picked elemnt in right to reproduce in left
+        A[row, col] = (n1*r/w) * ((N1-n1)*rho1/(N1*rho1+mu12*N2)) + (n2*r/w) * ((N1-n1)*mu21/(N2*rho2+mu21*N1))
+      elif n1p == n1 and n2p == n2-1:
+        # picked element in left to reproduce to right
+        # picked elemnt in right to reproduce in right
+        A[row, col] = ((N1-n1)/w) * (n2*mu12/(N1*rho1+mu12*N2)) + ((N2-n2)/w) * (n2*rho2/(N2*rho2+mu21*N1))
+      elif n1p == n1-1 and n2p == n2:
+        # picked element in left to reproduce to left
+        # picked elemnt in right to reproduce in left
+        A[row, col] = ((N1-n1)/w) * (n1*rho1/(N1*rho1+mu12*N2)) + ((N2-n2)/w) * (n1*mu21/(N2*rho2+mu21*N1))
+      elif n1p == n1 and n2p == n2 and (0 < n1+n2 < N1+N2):
+        # picked element in left to reproduce to left
+        # picked element in left to reproduce to right
+        # picked elemnt in right to reproduce in right
+        # picked elemnt in right to reproduce in left
+        A[row, col] = (
+            ((N1-n1)/w) * (((N1-n1)*rho1 + (N2-n2)*mu12)/(N1*rho1+mu12*N2))
+          + ((N2-n2)/w) * (((N2-n2)*rho2 + (N1-n1)*mu21)/(N2*rho2+mu21*N1))
+          + (n1*r/w) * ((n1*rho1 + n2*mu12)/(N1*rho1+mu12*N2))
+          + (n2*r/w) * ((n2*rho2 + n1*mu21)/(N2*rho2+mu21*N1))
+        )
+
+
+
+  x = np.zeros((N1+1)*(N2+1)+1,)
+  x[idx(1, 0)] = 1
+  return fix_and_ext_islands(A, x, N1, N2, slack, idx, ridx)
+
+def fix_and_ext_islands(A, x, N1, N2, slack, idx, ridx):
+  k = 0
+  # slack = 1e-12
+  s = +np.inf
+  while s >= slack:
+    k = k*2 if k > 0 else 1
+    b = x@np.linalg.matrix_power(A, k)
+    ans = {}
+    for idx, p in enumerate(b):
+      ans[ridx(idx)] = p
+    totalf = 0
+    totale = 0
+    fix = {}
+    ext = {}
+    s = 0
+    for (n1, n2), p in ans.items():
+      if 0 < n1+n2 < N1+N2:
+        continue
+      elif n1+n2 >= N1+N2:
+        last = 0
+        if n1+n2 > N1+N2:
+          # assert n1+n2 == N1+N2+1, (n1, n2, N1, N2, p)
+          # n2 -= 1
+          last = 1
+        fix[last] = p
+        totalf += p
+      elif n1+n2 == 0:
+        ext[-1] = p
+        totale += p
+
+    s = 1-totalf-totale
+    # print(totalf + totale, s)
+    if totalf == 0 or totale == 0:
+      s = +np.inf
+      continue
+
+    # s = 1-totalf-totale
+    # print(totalf + totale, s)
+    for last in range(2):
+      fix[last] /= totalf
+
+  # print(k)
+  return fix, ext
+
+def fix_and_ext(A, x, N, slack, idx, ridx):
   k = 0
   s = +np.inf
   while s >= slack:
