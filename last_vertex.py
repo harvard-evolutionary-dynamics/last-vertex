@@ -514,16 +514,21 @@ from tqdm import tqdm
 def main():
   setup()
   SLACK = 1e-6
-  N1 = 2
+  # N1 = 
+  # N2 = 5
+  N = 10
   N2 = 2
+  N1 = N-N2
+  print(N)
   mu12 = 1
   mu21 = 0
   rho1 = 1
   rho2 = 1
-  R = 20
+  R = 10
   data = []
-  for mu12 in np.linspace(0, 100, 10, endpoint=True)[1:]:
+  for mu12 in np.linspace(0, 1e6, 10, endpoint=True)[1:]:
     fix, ext = solve_islands(N1, N2, mu12=mu12, mu21=mu21, rho1=rho1, rho2=rho2, r=R, slack=SLACK) # solve_directed(N, r=R, slack=SLACK)
+    print(mu12, fix[0])
     data.append((mu12, fix[0]))
 
   df = pd.DataFrame(columns=["mu12", "p0"], data=data)
@@ -699,6 +704,7 @@ def fix_and_ext_islands(A, x, N1, N2, slack, idx, ridx):
       fix[last] /= totalf
 
   # print(k)
+  print(fix, ext)
   return fix, ext
 
 def fix_and_ext(A, x, N, slack, idx, ridx):
@@ -863,7 +869,12 @@ def LV(i, r, N):
 
 
 if __name__ == '__main__':
-  main()
+  # main()
+  N = 5
+  fix, ext = solve_directed(N, r=1, slack=1e-6)
+  print(f"{N=}")
+  for i, p in fix.items():
+    print(f"{i} --> {p}")
 
 """
   N = 3
