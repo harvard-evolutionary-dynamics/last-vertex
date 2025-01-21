@@ -20,55 +20,8 @@ from utils import sample, trial_cond_fix_last_vertex
 
 plt.rc('text.latex', preamble=r'\usepackage{amssymb}')
 
-INITIAL_NODE_PLACEMENT = 0
-NUM_WORKERS = 8
-ROUND = lambda steps, precision: (steps // precision) * precision
 
-@dataclass
-class GraphGenerator:
-  name: str
-  generate: Callable[[int], nx.DiGraph]
-  layout: Optional[Callable[[nx.DiGraph], dict]] = None
 
-def work(G, N, samples, r):
-  print(f"{r=}")
-  results = []
-  for vertex, steps in sample(lambda: trial_cond_fix_last_vertex(G, {INITIAL_NODE_PLACEMENT}, r, count_steps=True), samples):
-    results.append((N, r, vertex, ROUND(steps, 500)))
-  return results
-
-def last_vertex(
-  Ns: List[int],
-  graph_generator: GraphGenerator,
-  Rs: Iterable[float],
-  samples: int = 1000,
-  overwrite: bool = True,
-  use_existing_file: bool = False,
-  thread: bool = True,
-) -> pd.DataFrame:
-  file_name = f"data/{graph_generator.name}-estimated-N-vs-ft-{max(Ns)}.pkl"
-  # Ns = list(range(2, N+1))
-  if use_existing_file and Path(file_name).exists():
-    df = pd.read_pickle(file_name)
-  else:
-    data = []
-    for N in Ns:
-      print(f"{N=}")
-      G = graph_generator.generate(N)
-
-    if thread:
-      with Pool(NUM_WORKERS) as p:
-        for results in p.map(partial(work, G, N, samples), Rs):
-          data.extend(results)
-    else:
-      for results in map(partial(work, G, N, samples), Rs):
-        data.extend(results)
-
-    df = pd.DataFrame(data, columns=["Population size", "r", "Last vertex", "Steps"])
-    if overwrite:
-      df.to_pickle(file_name)
-
-  return df
 
 def is_undirected(G: nx.DiGraph):
   return all((v, u) in G.edges() for (u, v) in G.edges())
@@ -167,125 +120,8 @@ def plot_prob_last(df: pd.DataFrame, N, graph_generator: GraphGenerator, samples
   fig.savefig(f'figs/p-vs-i-R-1-{graph_generator.name}-N-{N}-samples-{samples}.png', dpi=300, bbox_inches="tight")
   # plt.show()
 
-def plot_time_vs_prob_last(df: pd.DataFrame, N, graph_generator: GraphGenerator, samples):
-  df = df[df["Population size"] == N]
-  assert len(df["r"].unique()) == 1
-  df = df.groupby(['Population size', 'r', 'Steps']).value_counts(normalize=True).reset_index(name='p')
-  df["Last vertex"] += 1
-  missing_vertices = set(range(1, N+1)) - set(df["Last vertex"].values)
-  for vertex in missing_vertices:
-    df.loc[len(df.index)] = [N, df["r"][0], vertex, 0]  
-  # print(df)
-  results = df.pivot(
-    columns="Last vertex",
-    values="p",
-    index="Steps",
-  )
-  results.sort_index(level=0, ascending=False, inplace=True)
-  ax = sns.heatmap(
-    results,
-    # width=1,
-    # palette='Greens_d',
-  )
-  # ax.set_xticks(range(1, N+1))
-  # ax.set_xticklabels(range(1, N+1))
-  # ax.set(xlabel='Location, $i$', ylabel='Probability last is $i$, $p$')
-  fig = ax.get_figure()
-  # fig.savefig(f'figs/p-vs-i-R-1-{graph_generator.name}-N-{N}-samples-{samples}.png', dpi=300, bbox_inches="tight")
-  plt.show()
-
-def star_central_graph(N: int) -> nx.DiGraph:
-  G = nx.DiGraph()
-  for i in range(1, N):
-    G.add_edge(0, i)
-    G.add_edge(i, 0)
-  return G
-
-def star_outskirt_graph(N: int) -> nx.DiGraph:
-  G = nx.DiGraph()
-  for i in range(N-1):
-    G.add_edge(N-1, i)
-    G.add_edge(i, N-1)
-  return G
-
-def complete_graph(N: int) -> nx.DiGraph:
-  G = nx.DiGraph()
-  for i in range(N):
-    for j in range(i+1, N):
-      G.add_edge(i, j)
-      G.add_edge(j, i)
-  return G
-
-def undirected_cycle(N: int) -> nx.DiGraph:
-  G = nx.DiGraph()
-  for idx in range(N):
-    G.add_edge(idx, (idx+1) % N)
-    G.add_edge((idx+1) % N, idx)
-  return G
-
-def directed_cycle(N: int) -> nx.DiGraph:
-  G = nx.DiGraph()
-  for idx in range(N):
-    G.add_edge(idx, (idx+1) % N)
-  return G
-
-def line_graph(N: int) -> nx.DiGraph:
-  G = nx.DiGraph()
-  for idx in range(N-1):
-    G.add_edge(idx, idx+1)
-    G.add_edge(idx+1, idx)
-  return G
-
-def grid_graph(N: int, periodic=False) -> nx.DiGraph:
-  n, m = 0, 0
-  for mm in range(int(np.sqrt(N)), 0, -1):
-    n, r = divmod(N, mm)
-    if r == 0:
-      m = mm
-      break
-  print(m, n)
-  def loc(a, b):
-    if not periodic and not (0 <= a < m and 0 <= b < n): return None
-    if a < 0: a = m-1
-    if b < 0: b = n-1
-    if a >= m: a = 0
-    if b >= n: b = 0
-    return n * a + b
-
-  G = nx.DiGraph()
-  for i in range(m):
-    for j in range(n):
-      node = n*i + j
-      up = loc(i-1, j)
-      down = loc(i+1, j) 
-      left = loc(i, j-1) 
-      right = loc(i, j+1) 
-
-      if up is not None:
-        G.add_edge(node, up)
-        G.add_edge(up, node)
-      if down is not None:
-        G.add_edge(node, down)
-        G.add_edge(down, node)
-      if left is not None:
-        G.add_edge(node, left)
-        G.add_edge(left, node)
-      if right is not None:
-        G.add_edge(node, right)
-        G.add_edge(right, node)
-
-  return G
 
 
-def setup():
-  sns.set_theme(font_scale=2, rc={'text.usetex' : True})
-  sns.set_style("whitegrid", {
-    'axes.grid' : False,
-   #  'axes.spines.left': False,
-   #  'axes.spines.right': False,
-   #  'axes.spines.top': False,
-   #  'axes.spines.bottom': False,
-  })
 
 def main2():
   setup()
@@ -352,7 +188,7 @@ def sd(N, rblock):
   print('start', rblock)
   bestp, bestpr = 0, 0
   for r in rblock:
-    fix = solve_directed(N, r=r, slack=SLACK)
+    fix = solve_cycle(N, r=r, slack=SLACK)
     if fix[0] > bestp:
       bestp = fix[0]
       bestpr = r
@@ -368,7 +204,7 @@ def mainbestrp():
     best_r = 0
     best_p = 0
     for R in np.linspace(N-5, N, 200):
-      fix, ext = solve_directed(N, r=R, slack=SLACK)
+      fix, ext = solve_cycle(N, r=R, slack=SLACK)
       print(N, R, fix[0])
       if fix[0] > best_p:
         best_r = R
@@ -447,7 +283,7 @@ def main111():
 
 def main111():
   N = 3
-  fix = solve_directed(N, r=1)
+  fix = solve_cycle(N, r=1)
 
 def main2():
   setup()
@@ -485,9 +321,9 @@ def mainnope():
   setup()
   SLACK = 1e-6
   R = 1
-  for N in range(2, 40+1):
+  for N in (40,): # range(2, 40+1):
     print(N)
-    fix, ext = solve_directed(N, r=R, slack=SLACK)
+    fix, ext = solve_cycle(N, r=R, slack=SLACK)
     print(fix)
     data=[(idx+1, p) for idx, p in fix.items()]
     df = pd.DataFrame(columns=["Last vertex", "p"], data=data)
@@ -556,192 +392,15 @@ def main():
  
 import sympy 
 
-from itertools import product
-import scipy.sparse.linalg
-
-def solve_directed(N: int, r: float = 1, slack=1e-6):
-  # (i, l) -> (ip, lp)
-  A = {}
-  idx = lambda a, b: a * (N+1) + b
-  ridx = lambda id: (id // (N+1), id % (N+1))
-
-  A = np.zeros((N*(N+1), N*(N+1)))
-  for i, ip in product(range(N), repeat=2):
-    for l, lp in product(range(N+1), repeat=2):
-      row, col = idx(i, l), idx(ip, lp)
-      A[row, col] = 0
-      # directed
-      if l in (0, N): A[row, col] = (int(lp == l and ip == i))
-      elif ip == i:   A[row, col] = (1/ (r+1)) * int(lp == l - 1)
-      elif ip == (i+1) % N: A[row, col] = r/(r+1) * int(lp == l + 1)
-
-      # undirected
-      # if l in (0, N): A[row, col] = (int(lp == l and ip == i))
-      # elif ip == i:   A[row, col] = (r/(2*(r+1))) * int(lp == l + 1) + (1/(2*(r+1))) * int(lp == l - 1)
-      # elif ip == (i-1) % N: A[row, col] = (1/(2*(r+1))) * int(lp == l - 1)
-      # elif ip == (i+1) % N: A[row, col] = r/(2*(r+1)) * int(lp == l + 1)
-
-  # S, U = scipy.linalg.eig(A.T)
-  #stationary = np.array(U[:, np.where(np.abs(S - 1.) < 1e-8)[0][0]].flat)
-  #stationary = stationary / np.sum(stationary)
-
-  # print(S)
-  # print(U)
-  x = np.zeros((N*(N+1),))
-  x[idx(0, 1)] = 1
-
-  # print(A)
-  # P, D = sympy.Matrix(A).diagonalize()
-  # print(D)
-
-  # jv = sympy.symbols('t')
-  # print(D)
-  # input()
-  # print(D**jv)
-  # input()
-  # aa = x.dot(P).dot(D**jv).dot(P.inv())
-  # print(len(aa))
-  # sympy.print_latex(aa[0].simplify())
-  # for j in range(1, 100):
-  #   print(aa[0].subs({jv: j}).evalf())
-  # input()
-
-  return fix_and_ext(A, x, N, slack, idx, ridx)
-
-def solve_islands(N1: int, N2: int, mu12: float, mu21: float, r: float = 1, rho1: float = 1, rho2: float = 1, slack=1e-6):
-  # (i, l) -> (ip, lp)
-  A = {}
-  idx = lambda a, b: a * (N2+1) + b
-  ridx = lambda id: (id // (N2+1), (id % (N2+1)) + (N2+1)*int(id == (N1+1)*(N2+1)))
-
-  A = np.zeros(((N1+1)*(N2+1)+1, (N1+1)*(N2+1)+1))
-  A[(N1+1)*(N2+1), (N1+1)*(N2+1)] = 1
-
-  for n1, n1p in product(range(N1+1), repeat=2):
-    for n2, n2p in product(range(N2+1), repeat=2):
-      row, col = idx(n1, n2), idx(n1p, n2p)
-      A[row, col] = 0
-      w = ((r-1)*n1 + N1) + ((r-1)*n2 + N2)
-      done = False
-      if n1+n2 not in (0, N1+N2) and n1p+n2p in (0, N1+N2):
-        # potentially absorbing state.
-        done = True
-      if n1+n2 in (0, N1+N2):
-        A[row, col] = int(n1p == n1 and n2p == n2)
-      elif n1p == n1 and n2p == n2+1:
-        # picked element in left to reproduce to right
-        # picked elemnt in right to reproduce in right
-        A[row, col + done] = (n1*r/w) * ((N2-n2)*mu12/(N1*rho1+mu12*N2)) + (n2*r/w) * ((N2-n2)*rho2/(N2*rho2+mu21*N1))
-      elif n1p == n1+1 and n2p == n2:
-        # picked element in left to reproduce to left
-        # picked elemnt in right to reproduce in left
-        A[row, col] = (n1*r/w) * ((N1-n1)*rho1/(N1*rho1+mu12*N2)) + (n2*r/w) * ((N1-n1)*mu21/(N2*rho2+mu21*N1))
-      elif n1p == n1 and n2p == n2-1:
-        # picked element in left to reproduce to right
-        # picked elemnt in right to reproduce in right
-        A[row, col] = ((N1-n1)/w) * (n2*mu12/(N1*rho1+mu12*N2)) + ((N2-n2)/w) * (n2*rho2/(N2*rho2+mu21*N1))
-      elif n1p == n1-1 and n2p == n2:
-        # picked element in left to reproduce to left
-        # picked elemnt in right to reproduce in left
-        A[row, col] = ((N1-n1)/w) * (n1*rho1/(N1*rho1+mu12*N2)) + ((N2-n2)/w) * (n1*mu21/(N2*rho2+mu21*N1))
-      elif n1p == n1 and n2p == n2 and (0 < n1+n2 < N1+N2):
-        # picked element in left to reproduce to left
-        # picked element in left to reproduce to right
-        # picked elemnt in right to reproduce in right
-        # picked elemnt in right to reproduce in left
-        A[row, col] = (
-            ((N1-n1)/w) * (((N1-n1)*rho1 + (N2-n2)*mu12)/(N1*rho1+mu12*N2))
-          + ((N2-n2)/w) * (((N2-n2)*rho2 + (N1-n1)*mu21)/(N2*rho2+mu21*N1))
-          + (n1*r/w) * ((n1*rho1 + n2*mu12)/(N1*rho1+mu12*N2))
-          + (n2*r/w) * ((n2*rho2 + n1*mu21)/(N2*rho2+mu21*N1))
-        )
 
 
 
-  x = np.zeros((N1+1)*(N2+1)+1,)
-  x[idx(1, 0)] = 1
-  return fix_and_ext_islands(A, x, N1, N2, slack, idx, ridx)
 
-def fix_and_ext_islands(A, x, N1, N2, slack, idx, ridx):
-  k = 0
-  # slack = 1e-12
-  s = +np.inf
-  while s >= slack:
-    k = k*2 if k > 0 else 1
-    b = x@np.linalg.matrix_power(A, k)
-    ans = {}
-    for idx, p in enumerate(b):
-      ans[ridx(idx)] = p
-    totalf = 0
-    totale = 0
-    fix = {}
-    ext = {}
-    s = 0
-    for (n1, n2), p in ans.items():
-      if 0 < n1+n2 < N1+N2:
-        continue
-      elif n1+n2 >= N1+N2:
-        last = 0
-        if n1+n2 > N1+N2:
-          # assert n1+n2 == N1+N2+1, (n1, n2, N1, N2, p)
-          # n2 -= 1
-          last = 1
-        fix[last] = p
-        totalf += p
-      elif n1+n2 == 0:
-        ext[-1] = p
-        totale += p
 
-    s = 1-totalf-totale
-    # print(totalf + totale, s)
-    if totalf == 0 or totale == 0:
-      s = +np.inf
-      continue
 
-    # s = 1-totalf-totale
-    # print(totalf + totale, s)
-    for last in range(2):
-      fix[last] /= totalf
 
-  # print(k)
-  print(fix, ext)
-  return fix, ext
 
-def fix_and_ext(A, x, N, slack, idx, ridx):
-  k = 0
-  s = +np.inf
-  while s >= slack:
-    k = k*2 if k > 0 else 1
-    b = x@np.linalg.matrix_power(A, k)
-    ans = {}
-    for idx, p in enumerate(b):
-      ans[ridx(idx)] = p
-    totalf = 0
-    totale = 0
-    fix = {}
-    ext = {}
-    s = 0
-    for (i, l), p in ans.items():
-      if 0 < l < N:
-        s += p
-        continue
-      elif l == N:
-        fix[i] = p
-        totalf += p
-      elif l == 0:
-        ext[i] = p
-        totale += p
 
-    if totalf == 0 or totale == 0:
-      s = +np.inf
-      continue
-
-    for i in range(N):
-      fix[i] /= totalf
-      ext[i] /= totale
-
-  # print(k)
-  return fix, ext
 
 
 def solve_directedd(N: int, slack=1e-6):
@@ -868,13 +527,56 @@ def LV(i, r, N):
   return solution
 
 
+def main2025():
+  SAMPLES = 100000
+  N = 10
+  print(f"{SAMPLES=}")
+  gen = GraphGenerator(name='complete', generate=complete_graph, layout=nx.circular_layout)
+  Rs = (1,2,3,4,5) # np.linspace(1, 40, 200)
+  df = last_vertex(
+    [N],
+    gen,
+    samples=SAMPLES,
+    Rs=Rs,
+    thread=True,
+  )
+  print(df)
+  ddf = (
+    df
+    .drop(columns=['Population size', 'Steps'])
+    .groupby(by=['r'])
+    .value_counts(normalize=True)
+    .reset_index(name='p')
+    .sort_values(by=['r', 'Last vertex'])
+  )
+  for r in Rs:
+    ddfr = ddf[ddf['r'] == r]
+    print(f'{r=}')
+    print(ddfr[ddfr['Last vertex'] < 1]['p'].sum(), ddfr[ddfr['Last vertex'] >= 1]['p'].sum())
+
 if __name__ == '__main__':
+  main2025()
+  # mainnope()
   # main()
-  N = 5
-  fix, ext = solve_directed(N, r=1, slack=1e-6)
-  print(f"{N=}")
-  for i, p in fix.items():
-    print(f"{i} --> {p}")
+  # for N in (5,6,7,8):
+  #   for r in (1,2,3):
+  #     print(f"{N=}, {r=}")
+  #     fix, ext = solve_cycle(N, r=r, slack=1e-6, directed=True)
+  #     data = []
+  #     for i, p in fix.items():
+  #       print(f"{i+1} --> {p}")
+  #       # For directed cycle, place mutant at location 1.
+  #       data.append(((i+1)%N, r))
+  #     df = pd.DataFrame(data, columns=['i', 'r'])
+  #     results = df.to_json(orient='records')
+  #     full_json = {
+  #       'graph': 'directed-cycle',
+  #       'N': N,
+  #       'context': 'For directed cycle, place mutant at location 1; possible locations are 0, 1, ..., N-1.',
+  #       'results': results,
+  #     }
+
+  #     print('\n--------------\n')
 
 """
   N = 3

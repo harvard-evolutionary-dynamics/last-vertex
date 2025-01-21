@@ -1,4 +1,6 @@
 import numpy as np
+import scipy as sp 
+import scipy.linalg
 from collections import defaultdict
 
 STEPS = 1_000_000
@@ -26,16 +28,19 @@ def solve(a: int, b: int, r: float):
   x = np.zeros(shape=(b+1,))
   x[0] = 1
   b = x@np.linalg.matrix_power(A, STEPS)
+  print(scipy.linalg.eig(A, left=True, right=False))
+  # idx, *_ = np.where(np.isclose(eigvals, 1))
+  # bs = eigvecs[idx]/np.sum(eigvecs[idx])
+  # print(b, bs)
   return b
 
 def main():
-  r = .51
+  a = 10
+  b = 2
+  r = 2
   """r>1/2"""
-  xs = list(range(1, 10000, 1000))
-  for a in xs:
-    b = a
-    # print(f"{a=}, {b=}, {r=}")
-    print(solve(a=a, b=b, r=r)[-1], f"conjecture={1-1/(2*r)}")
+  print(f"{a=}, {b=}, {r=}")
+  print(solve(a=a, b=b, r=r)[-1], f"conjecture={1-1/(2*r)}")
 
 if __name__ == '__main__':
   main()
